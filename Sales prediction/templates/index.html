@@ -1,0 +1,237 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Kaspi Market Sales Prediction</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        body {
+            background-color: #f8f9fa;
+            padding: 20px;
+        }
+        .card {
+            margin-bottom: 20px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        }
+        .prediction-result {
+            font-size: 1.2em;
+            font-weight: bold;
+            color: #28a745;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1 class="text-center mb-4">Kaspi Market Sales Prediction</h1>
+        
+        <!-- Model Training Section -->
+        <div class="card">
+            <div class="card-header">
+                <h3>Train Models</h3>
+            </div>
+            <div class="card-body">
+                <form id="trainForm" enctype="multipart/form-data">
+                    <div class="mb-3">
+                        <label for="trainingFile" class="form-label">Upload Training Data (CSV)</label>
+                        <input type="file" class="form-control" id="trainingFile" accept=".csv" required>
+                    </div>
+                    <button type="submit" class="btn btn-primary">Train Models</button>
+                </form>
+            </div>
+        </div>
+
+        <!-- Prediction Section -->
+        <div class="card">
+            <div class="card-header">
+                <h3>Make Prediction</h3>
+            </div>
+            <div class="card-body">
+                <form id="predictionForm">
+                    <div class="row">
+                        <div class="col-md-6 mb-3">
+                            <label for="price" class="form-label">Price</label>
+                            <input type="number" class="form-control" id="price" required>
+                        </div>
+                        <div class="col-md-6 mb-3">
+                            <label for="views" class="form-label">Views</label>
+                            <input type="number" class="form-control" id="views" required>
+                        </div>
+                    </div>
+                    <div class="row">
+                        <div class="col-md-6 mb-3">
+                            <label for="likes" class="form-label">Likes</label>
+                            <input type="number" class="form-control" id="likes" required>
+                        </div>
+                        <div class="col-md-6 mb-3">
+                            <label for="comments" class="form-label">Comments</label>
+                            <input type="number" class="form-control" id="comments" required>
+                        </div>
+                    </div>
+                    <button type="submit" class="btn btn-success">Predict Sales</button>
+                </form>
+            </div>
+        </div>
+
+        <!-- Results Section -->
+        <div class="card">
+            <div class="card-header">
+                <h3>Prediction Results</h3>
+            </div>
+            <div class="card-body">
+                <div id="results">
+                    <table class="table table-bordered" id="predictionsTable" style="display:none;">
+                        <thead>
+                            <tr>
+                                <th>Model</th>
+                                <th>Prediction</th>
+                                <th>Test R² / Accuracy</th>
+                                <th>CV R² / Accuracy</th>
+                            </tr>
+                        </thead>
+                        <tbody id="predictionsBody">
+                        </tbody>
+                    </table>
+                    <p>Cluster Assignment (K-means): <span id="clusterAssignment" class="prediction-result">-</span></p>
+                    <div class="mt-4">
+                        <h5>Model Performance</h5>
+                        <img id="performanceGraph" src="/performance-graph" alt="Model Performance Graph" style="max-width:100%; display:none;" />
+                    </div>
+                    <div class="mt-4">
+                        <h5>Cluster Samples (K-means)</h5>
+                        <div id="clusterSamples"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        document.getElementById('trainForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const formData = new FormData();
+            formData.append('file', document.getElementById('trainingFile').files[0]);
+
+            try {
+                const response = await fetch('/train', {
+                    method: 'POST',
+                    body: formData
+                });
+                const data = await response.json();
+                alert(data.message || data.error);
+                // Show performance graph after training
+                document.getElementById('performanceGraph').style.display = 'block';
+                document.getElementById('performanceGraph').src = '/performance-graph?' + new Date().getTime();
+            } catch (error) {
+                alert('Error training models: ' + error);
+            }
+        });
+
+        document.getElementById('predictionForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const data = {
+                price: document.getElementById('price').value,
+                views: document.getElementById('views').value,
+                likes: document.getElementById('likes').value,
+                comments: document.getElementById('comments').value
+            };
+
+            try {
+                const response = await fetch('/predict', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify(data)
+                });
+                const result = await response.json();
+                if (result.error) {
+                    alert(result.error);
+                    return;
+                }
+                // Fetch model metrics
+                const metricsResp = await fetch('/model-metrics');
+                const metrics = await metricsResp.json();
+                // Fill predictions table
+                const predictions = result.predictions;
+                const tbody = document.getElementById('predictionsBody');
+                tbody.innerHTML = '';
+                for (const [model, value] of Object.entries(predictions)) {
+                    const row = document.createElement('tr');
+                    const modelCell = document.createElement('td');
+                    modelCell.textContent = model;
+                    const valueCell = document.createElement('td');
+                    valueCell.textContent = Math.round(value * 1000) / 1000;
+                    // Metrics
+                    const testMetricCell = document.createElement('td');
+                    const cvMetricCell = document.createElement('td');
+                    if (metrics[model]) {
+                        testMetricCell.textContent = metrics[model].test_r2 !== undefined ? (Math.round(metrics[model].test_r2 * 1000) / 1000) : (metrics[model].test_acc !== undefined ? (Math.round(metrics[model].test_acc * 1000) / 1000) : '-');
+                        cvMetricCell.textContent = metrics[model].cv_r2 !== undefined ? (Math.round(metrics[model].cv_r2 * 1000) / 1000) : (metrics[model].cv_acc !== undefined ? (Math.round(metrics[model].cv_acc * 1000) / 1000) : '-');
+                    } else {
+                        testMetricCell.textContent = '-';
+                        cvMetricCell.textContent = '-';
+                    }
+                    row.appendChild(modelCell);
+                    row.appendChild(valueCell);
+                    row.appendChild(testMetricCell);
+                    row.appendChild(cvMetricCell);
+                    tbody.appendChild(row);
+                }
+                document.getElementById('predictionsTable').style.display = 'table';
+                document.getElementById('clusterAssignment').textContent = result.cluster;
+                // Show performance graph
+                document.getElementById('performanceGraph').style.display = 'block';
+                document.getElementById('performanceGraph').src = '/performance-graph?' + new Date().getTime();
+                // Fetch and display cluster samples
+                const clusterSamplesDiv = document.getElementById('clusterSamples');
+                clusterSamplesDiv.innerHTML = '';
+                try {
+                    const clustersResp = await fetch('/clusters');
+                    const clusters = await clustersResp.json();
+                    for (const [clusterId, items] of Object.entries(clusters)) {
+                        const clusterBlock = document.createElement('div');
+                        clusterBlock.className = 'mb-3';
+                        const title = document.createElement('h6');
+                        title.textContent = `Cluster ${clusterId}`;
+                        clusterBlock.appendChild(title);
+                        if (items.length === 0) {
+                            clusterBlock.appendChild(document.createTextNode('No samples.'));
+                        } else {
+                            const table = document.createElement('table');
+                            table.className = 'table table-sm table-bordered';
+                            const thead = document.createElement('thead');
+                            const headRow = document.createElement('tr');
+                            for (const key of Object.keys(items[0])) {
+                                const th = document.createElement('th');
+                                th.textContent = key;
+                                headRow.appendChild(th);
+                            }
+                            thead.appendChild(headRow);
+                            table.appendChild(thead);
+                            const tbody = document.createElement('tbody');
+                            for (const item of items) {
+                                const row = document.createElement('tr');
+                                for (const key of Object.keys(item)) {
+                                    const td = document.createElement('td');
+                                    td.textContent = item[key];
+                                    row.appendChild(td);
+                                }
+                                tbody.appendChild(row);
+                            }
+                            table.appendChild(tbody);
+                            clusterBlock.appendChild(table);
+                        }
+                        clusterSamplesDiv.appendChild(clusterBlock);
+                    }
+                } catch (err) {
+                    clusterSamplesDiv.textContent = 'Could not load cluster samples.';
+                }
+            } catch (error) {
+                alert('Error making prediction: ' + error);
+            }
+        });
+    </script>
+</body>
+</html> 
